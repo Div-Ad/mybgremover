@@ -12,12 +12,13 @@ from tests.test_papier import aquarelle
 @pytest.fixture
 def client(monkeypatch):
     # pas de vrai modèle : le masque IA est simulé
-    monkeypatch.setattr(serveur, "_preparer_modele", lambda: serveur._etat.update(modele="pret"))
+    monkeypatch.setattr(serveur.ia, "modele_present", lambda: True)
+    monkeypatch.setattr(serveur.ia, "_session", lambda: None)
     monkeypatch.setattr(
         serveur.ia, "masque_sujet", lambda im: np.asarray(aquarelle(True)[1], dtype=np.float32)
     )
     with TestClient(serveur.app) as c:
-        serveur._etat["modele"] = "pret"
+        serveur._etat["modele"] = "absent"
         yield c
 
 
@@ -146,3 +147,31 @@ def test_apercu_de_l_original_avant_lancement(client, fmt):
     assert client.get(f"/api/apercu/{depot['id']}/apres").status_code == 404  # pas encore détourée
     corps = _lancer(client, depot["id"])
     assert client.get(f"/api/apercu/{corps['id']}/apres").status_code == 200
+
+
+def test_modele_charge_a_la_premiere_image(client):
+    assert client.get("/api/etat").json()["modele"] == "absent"  # serveur léger au démarrage
+    _lancer(client, _charger(client, _jpeg())["id"])
+    assert client.get("/api/etat").json()["modele"] == "pret"
+
+
+def test_modele_libere_apres_inactivite(monkeypatch):
+    liberations = []
+    monkeypatch.setattr(serveur.ia, "liberer", lambda: liberations.append(1))
+    serveur._etat["modele"] = "pret"
+    serveur._activite["dernier_calcul"] = serveur.time.monotonic()
+    assert not serveur._liberer_si_inactif()  # trop tôt
+    serveur._activite["dernier_calcul"] -= serveur.LIBERATION + 1
+    with serveur._calcul:
+        assert not serveur._liberer_si_inactif()  # jamais pendant un calcul
+    assert serveur._liberer_si_inactif()
+    assert liberations == [1] and serveur._etat["modele"] == "absent"
+
+
+def test_refus_pendant_le_telechargement_du_modele(client):
+    depot = _charger(client, _jpeg())
+    serveur._etat["modele"] = "telechargement"
+    try:
+        assert client.post(f"/api/detourer/{depot['id']}").status_code == 503
+    finally:
+        serveur._etat["modele"] = "absent"

@@ -5,7 +5,6 @@ Lancement : python -m uvicorn app.serveur:app --host 127.0.0.1 --port 8765
 
 from __future__ import annotations
 
-import asyncio
 import io
 import tempfile
 import threading
@@ -50,20 +49,58 @@ def _dossier_depots() -> Path:
     return Path(_temporaire[0].name)
 
 
-def _preparer_modele() -> None:
+LIBERATION = 600  # s sans détourage avant de rendre la mémoire du modèle
+_activite = {"dernier_calcul": time.monotonic()}
+
+
+def _telecharger_modele() -> None:
+    """Premier lancement : le modèle (≈ 1 Go) se télécharge en tâche de fond."""
     try:
-        _etat["modele"] = "chargement"
-        ia._session()
-        _etat["modele"] = "pret"
-    except Exception as e:  # pas de réseau au premier lancement, fichier corrompu…
+        _etat["modele"] = "telechargement"
+        ia.chemin_modele()
+        _etat["modele"] = "absent"
+    except Exception as e:  # pas de réseau…
         _etat["modele"] = "erreur"
         _etat["erreur"] = str(e)
 
 
+def _charger_modele() -> None:
+    """Appelé sous `_calcul`, avant chaque image : le modèle n'est chargé qu'au besoin."""
+    if _etat["modele"] == "pret":
+        return
+    try:
+        _etat["modele"] = "chargement"
+        ia._session()
+        _etat.update(modele="pret", erreur=None)
+    except Exception as e:  # fichier corrompu, pas de réseau pour le télécharger…
+        _etat.update(modele="erreur", erreur=str(e))
+        raise HTTPException(503, f"Le modèle n'a pas pu être chargé : {e}") from e
+
+
+def _liberer_si_inactif() -> bool:
+    inactif = time.monotonic() - _activite["dernier_calcul"] > LIBERATION
+    if _etat["modele"] != "pret" or not inactif or not _calcul.acquire(blocking=False):
+        return False
+    try:
+        ia.liberer()
+        _etat["modele"] = "absent"
+        return True
+    finally:
+        _calcul.release()
+
+
+def _surveiller() -> None:
+    while True:
+        time.sleep(30)
+        _liberer_si_inactif()
+
+
 @asynccontextmanager
 async def _cycle(_app: FastAPI):
-    # le modèle se charge en tâche de fond : la page s'affiche tout de suite
-    asyncio.get_running_loop().run_in_executor(None, lambda: _preparer_modele())
+    # serveur léger tant qu'on ne détoure pas : le modèle n'est chargé qu'à la première image
+    if not ia.modele_present():
+        threading.Thread(target=_telecharger_modele, daemon=True).start()
+    threading.Thread(target=_surveiller, daemon=True).start()
     yield
     _depots.clear()
     _vignettes.clear()
@@ -71,7 +108,7 @@ async def _cycle(_app: FastAPI):
         _temporaire.pop().cleanup()
 
 
-app = FastAPI(title="Détourage d'aquarelles", lifespan=_cycle)
+app = FastAPI(title="MyBGRemover", lifespan=_cycle)
 
 
 def _apercu(im: Image.Image) -> bytes:
@@ -134,8 +171,10 @@ def _traiter(chemin: Path, reduction: tuple[float, float, str] | None = None) ->
     rgb.info.update(info)
     with _calcul:
         debut = time.perf_counter()
+        _charger_modele()
         resultat = detourer(rgb, sujet=ia.masque_sujet(rgb))
         duree = time.perf_counter() - debut
+        _activite["dernier_calcul"] = time.monotonic()
     return {
         "image": resultat,
         "avant": _apercu(rgb),
@@ -147,6 +186,21 @@ def _traiter(chemin: Path, reduction: tuple[float, float, str] | None = None) ->
 @app.get("/")
 def accueil() -> FileResponse:
     return FileResponse(STATIQUE / "index.html")
+
+
+PWA = {  # fichiers de l'app installable, servis à la racine (portée du service worker : /)
+    "manifest.webmanifest": "application/manifest+json",
+    "sw.js": "text/javascript",
+    "icone-192.png": "image/png",
+    "icone-512.png": "image/png",
+}
+
+
+@app.get("/{nom}")
+def fichier_pwa(nom: str) -> FileResponse:
+    if nom not in PWA:
+        raise HTTPException(404)
+    return FileResponse(STATIQUE / nom, media_type=PWA[nom], headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/etat")
@@ -198,8 +252,8 @@ async def detourer_depot(
     cote: float | None = Form(None),
     unite: str = Form("cm"),
 ) -> JSONResponse:
-    if _etat["modele"] != "pret":
-        raise HTTPException(503, "Le modèle n'est pas encore prêt.")
+    if _etat["modele"] == "telechargement":
+        raise HTTPException(503, "Le modèle se télécharge encore (premier lancement).")
     if ident not in _depots:
         raise HTTPException(404, "Image introuvable : dépose-la à nouveau.")
     reduction = None

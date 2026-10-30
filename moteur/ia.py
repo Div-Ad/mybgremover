@@ -18,6 +18,10 @@ MOYENNE = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 ECART = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
+def modele_present() -> bool:
+    return (DOSSIER / FICHIER).exists()
+
+
 def chemin_modele() -> Path:
     chemin = DOSSIER / FICHIER
     if not chemin.exists():
@@ -36,6 +40,14 @@ def _session():
     return ort.InferenceSession(
         str(chemin_modele()), options, providers=["CPUExecutionProvider"]
     )
+
+
+def liberer() -> None:
+    """Rend la mémoire du modèle (≈ 2 Go) ; il sera rechargé à la prochaine image."""
+    import gc
+
+    _session.cache_clear()
+    gc.collect()
 
 
 def masque_sujet(rgb: Image.Image) -> np.ndarray:

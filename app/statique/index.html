@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Détourage</title>
+<meta name="theme-color" content="#2f5bd3">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icone-192.png">
+<title>MyBGRemover</title>
 <style>
   :root {
     --fond: #f4f3f0; --carte: #fff; --texte: #1d1d1f; --doux: #6b6b70; --ligne: #dcdad5;
@@ -70,7 +73,7 @@
 <body>
 <main>
   <header>
-    <h1>Détourage</h1>
+    <h1>MyBGRemover</h1>
     <div>
       <label for="fond">Aperçu sur</label>
       <select id="fond">
@@ -122,7 +125,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const etat = $('#etat'), liste = $('#liste'), choixFormat = $('#format'), choixFond = $('#fond'), boutonLancer = $('#lancer');
 const items = [];       // toutes les cartes, dans l'ordre
-let enCours = false, modelePret = false;
+let enCours = false, serveurPret = false;
 
 // ---- préférences mémorisées ----
 const lire = (cle, defaut) => { try { return localStorage.getItem(cle) ?? defaut; } catch { return defaut; } };
@@ -219,17 +222,25 @@ async function autoriserDossier() {
   return null;
 }
 
-// ---- état du modèle ----
-async function surveillerModele() {
+// ---- état du serveur (le modèle, lui, n'est chargé qu'à la première image) ----
+async function surveillerServeur() {
   try {
     const r = await (await fetch('/api/etat')).json();
-    if (r.modele === 'pret') { modelePret = true; if (etat.className !== 'erreur') etat.textContent = ''; majBoutons(); suivant(); return; }
-    if (r.modele === 'erreur') { etat.textContent = 'Le modèle n\'a pas pu être chargé : ' + r.erreur; etat.className = 'erreur'; return; }
-    etat.textContent = 'Préparation du modèle… (au premier lancement, téléchargement d\'environ 1 Go)';
-  } catch { etat.textContent = 'Serveur injoignable : relance lancer.bat.'; etat.className = 'erreur'; }
-  setTimeout(surveillerModele, 1500);
+    if (r.modele === 'telechargement') {
+      etat.textContent = 'Premier lancement : téléchargement du modèle (environ 1 Go)…'; etat.className = '';
+    } else {
+      serveurPret = true;
+      etat.textContent = r.modele === 'erreur' ? 'Le modèle n\'a pas pu être chargé : ' + r.erreur : '';
+      etat.className = r.modele === 'erreur' ? 'erreur' : '';
+      majBoutons(); suivant();
+      return;
+    }
+  } catch { etat.textContent = 'Serveur injoignable : relance MyBGRemover (ou lancer.bat).'; etat.className = 'erreur'; }
+  setTimeout(surveillerServeur, 1500);
 }
-surveillerModele();
+surveillerServeur();
+// app installable (Chrome, Edge : icône « Installer » dans la barre d'adresse)
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
 // ---- ajout d'images : envoi au serveur, sans calcul ----
 function ajouter(fichiers) {
@@ -325,13 +336,16 @@ boutonLancer.onclick = async () => {
 // ---- traitement, une image à la fois ----
 async function suivant() {
   const item = items.find(i => i.etat === 'attente');
-  if (enCours || !modelePret || !item) return;
+  if (enCours || !serveurPret || !item) return;
   enCours = true;
   item.etat = 'encours';
   const statut = $('.statut', item.el);
   const debut = Date.now();
-  const minuteur = setInterval(() => statut.textContent = `Détourage en cours… ${Math.round((Date.now() - debut) / 1000)} s`, 500);
-  statut.textContent = 'Détourage en cours…';
+  // première image après un moment d'inactivité : le modèle se recharge d'abord
+  const libelle = await fetch('/api/etat').then(r => r.json()).then(r => r.modele === 'pret').catch(() => true)
+    ? 'Détourage en cours…' : 'Chargement du modèle puis détourage…';
+  const minuteur = setInterval(() => statut.textContent = `${libelle} ${Math.round((Date.now() - debut) / 1000)} s`, 500);
+  statut.textContent = libelle;
   try {
     const corps = new FormData();
     if (item.taille) for (const [k, v] of Object.entries(item.taille)) corps.append(k, v);
@@ -414,7 +428,7 @@ async function telecharger(item) {
 
 function majBoutons() {
   const prets = items.filter(i => i.etat === 'prete').length;
-  boutonLancer.disabled = !prets || !modelePret;
+  boutonLancer.disabled = !prets || !serveurPret;
   boutonLancer.textContent = prets > 1 ? `Lancer (${prets} images)` : 'Lancer';
   $('#tout').hidden = items.filter(i => i.etat === 'fini').length < 2;
 }
