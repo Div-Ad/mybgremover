@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Détourage</title>
+<style>
+  :root {
+    --fond: #f4f3f0; --carte: #fff; --texte: #1d1d1f; --doux: #6b6b70; --ligne: #dcdad5;
+    --accent: #2f5bd3; --accent-texte: #fff; --erreur: #8a5a00;
+    --damier-a: #e9e9e9; --damier-b: #fff;
+    --lancer: #1a7f45; --lancer-texte: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fond: #18181a; --carte: #222225; --texte: #ececee; --doux: #a0a0a6; --ligne: #36363b;
+      --accent: #7c9cff; --accent-texte: #0d1430; --erreur: #f0c060;
+      --damier-a: #3a3a3e; --damier-b: #2c2c30;
+      --lancer: #3cc274; --lancer-texte: #062012;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--fond); color: var(--texte); }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 112px; }  /* place pour le bouton Lancer */
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; flex: 1; }
+  label, .legende { color: var(--doux); }
+  select, button { font: inherit; min-height: 40px; border-radius: 8px; border: 1px solid var(--ligne); background: var(--carte); color: var(--texte); padding: 0 12px; cursor: pointer; }
+  input[type=number] { font: inherit; min-height: 40px; width: 5.5em; border-radius: 8px; border: 1px solid var(--ligne); background: var(--carte); color: var(--texte); padding: 0 8px; }
+  input[type=checkbox] { width: 18px; height: 18px; vertical-align: -3px; margin: 0 4px 0 0; accent-color: var(--accent); }
+  button.principal { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); }
+  button:disabled { opacity: .5; cursor: default; }
+  /* bord droit aligné sur celui du contenu (main : 1100 px, marges de 16 px) */
+  #lancer { position: fixed; right: max(16px, (100% - 1100px) / 2 + 16px); bottom: 24px; z-index: 10; min-height: 52px; padding: 0 28px; border-radius: 999px;
+            font-size: 16px; font-weight: 600; background: var(--lancer); border-color: var(--lancer); color: var(--lancer-texte);
+            box-shadow: 0 6px 20px rgba(0,0,0,.28); }
+  #lancer:not(:disabled):hover { filter: brightness(1.08); }
+  #lancer:disabled { opacity: .4; box-shadow: none; }
+  @media (max-width: 600px) { #lancer { bottom: 16px; } }
+  #sortie { background: var(--carte); border: 1px solid var(--ligne); border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; align-items: center; }
+  #sortie .ligne { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  #sortie [hidden] { display: none; }
+  #taille.inactif .reglage { opacity: .5; }
+  #cible, #dossier { color: var(--doux); font-size: 13px; }
+  @media (max-width: 600px) { #sortie { grid-template-columns: 1fr; gap: 4px; } #sortie .ligne { margin-bottom: 8px; } }
+  #zone { display: block; border: 2px dashed var(--ligne); border-radius: 12px; padding: 40px 16px; text-align: center; cursor: pointer; color: var(--doux); background: var(--carte); }
+  #zone strong { color: var(--texte); display: block; font-size: 17px; margin-bottom: 4px; }
+  body.survol #zone { border-color: var(--accent); }
+  #etat { margin: 12px 0 0; color: var(--doux); min-height: 1.45em; }
+  #etat.erreur { color: var(--erreur); }
+  #liste { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 16px; margin-top: 20px; padding: 0; list-style: none; }
+  .carte { background: var(--carte); border: 1px solid var(--ligne); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .vue { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; user-select: none; color: var(--doux);
+         background: repeating-conic-gradient(var(--damier-a) 0 25%, var(--damier-b) 0 50%) 0 0 / 20px 20px; }
+  body.fond-sombre .vue { background: #202024; }
+  body.fond-blanc .vue { background: #fff; }
+  .vue img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+  .vue .badge { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,.65); color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 6px; }
+  .vue.prete { cursor: pointer; }
+  .pied { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 6px; }
+  .nom { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dims, .statut { color: var(--doux); font-size: 13px; }
+  .dims b { color: var(--texte); font-weight: 600; }
+  .statut.erreur { color: var(--erreur); }
+  .actions { display: flex; gap: 8px; margin-top: 2px; }
+  .actions .principal { flex: 1; }
+  .visuellement-cache { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Détourage</h1>
+    <div>
+      <label for="fond">Aperçu sur</label>
+      <select id="fond">
+        <option value="damier">damier</option>
+        <option value="sombre">fond sombre</option>
+        <option value="blanc">fond blanc</option>
+      </select>
+    </div>
+    <button id="tout" hidden>Tout télécharger (.zip)</button>
+  </header>
+
+  <section id="sortie" aria-label="Sortie">
+    <label for="format">Format de sortie</label>
+    <div class="ligne">
+      <select id="format">
+        <option value="png">PNG</option>
+        <option value="webp">WebP (sans perte)</option>
+        <option value="avif">AVIF</option>
+      </select>
+    </div>
+    <span class="legende">Taille de sortie</span>
+    <div class="ligne" id="taille">
+      <label><input id="redim" type="checkbox">Réduire avant détourage</label>
+      <span class="reglage"><input id="dpi" type="number" min="1" max="4800" step="1" aria-label="Résolution"> <label for="dpi">dpi</label></span>
+      <span class="reglage"><label for="cote">· petit côté</label> <input id="cote" type="number" min="0.1" step="any">
+        <select id="unite" aria-label="Unité"><option value="cm">cm</option><option value="px">px</option></select></span>
+      <span id="cible" class="reglage"></span>
+    </div>
+    <span class="legende" data-dossier>Enregistrer dans</span>
+    <div class="ligne" data-dossier>
+      <button id="choisirDossier">Choisir un dossier…</button>
+      <button id="oublierDossier" hidden>Ne plus enregistrer automatiquement</button>
+      <span id="dossier"></span>
+    </div>
+  </section>
+
+  <label id="zone" for="fichiers">
+    <strong>Dépose tes aquarelles ici</strong>
+    ou clique pour les choisir · Ctrl+V pour coller une image · rien ne démarre avant « Lancer »
+  </label>
+  <input id="fichiers" class="visuellement-cache" type="file" accept="image/*,.tif,.tiff" multiple>
+  <p id="etat" role="status"></p>
+
+  <ul id="liste"></ul>
+  <button id="lancer" disabled>Lancer</button>
+</main>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const etat = $('#etat'), liste = $('#liste'), choixFormat = $('#format'), choixFond = $('#fond'), boutonLancer = $('#lancer');
+const items = [];       // toutes les cartes, dans l'ordre
+let enCours = false, modelePret = false;
+
+// ---- préférences mémorisées ----
+const lire = (cle, defaut) => { try { return localStorage.getItem(cle) ?? defaut; } catch { return defaut; } };
+const ecrire = (cle, v) => { try { localStorage.setItem(cle, v); } catch {} };
+choixFormat.value = lire('format', 'png');
+choixFond.value = lire('fond', 'damier');
+const appliquerFond = () => { document.body.classList.toggle('fond-sombre', choixFond.value === 'sombre'); document.body.classList.toggle('fond-blanc', choixFond.value === 'blanc'); };
+appliquerFond();
+choixFormat.onchange = () => ecrire('format', choixFormat.value);
+choixFond.onchange = () => { ecrire('fond', choixFond.value); appliquerFond(); };
+
+// ---- taille de sortie : petit côté (largeur en portrait, hauteur en paysage) ----
+const redim = $('#redim'), dpi = $('#dpi'), cote = $('#cote'), unite = $('#unite');
+redim.checked = lire('redim', '1') === '1';
+dpi.value = lire('dpi', '300');
+unite.value = lire('unite', 'cm');
+cote.value = lire('cote', '21');
+function reglagesTaille() {
+  const d = parseFloat(dpi.value), c = parseFloat(cote.value);
+  if (!redim.checked || !(d > 0) || !(c > 0)) return null;
+  return { dpi: d, cote: c, unite: unite.value };
+}
+// même calcul que le serveur (_taille_reduite) ; null = image gardée telle quelle
+function tailleFinale(l, h, t) {
+  if (!t) return null;
+  const cible = Math.round(t.unite === 'cm' ? t.cote / 2.54 * t.dpi : t.cote), petit = Math.min(l, h);
+  if (cible >= petit) return null;
+  const f = cible / petit;
+  return [Math.max(1, Math.round(l * f)), Math.max(1, Math.round(h * f))];
+}
+function majTaille() {
+  $('#taille').classList.toggle('inactif', !redim.checked);
+  dpi.disabled = cote.disabled = unite.disabled = !redim.checked;
+  const t = reglagesTaille();
+  $('#cible').textContent = !redim.checked ? 'résolution d\'origine'
+    : !t ? 'valeurs invalides'
+    : t.unite === 'cm' ? `= ${Math.round(t.cote / 2.54 * t.dpi)} px` : `= ${(t.cote / t.dpi * 2.54).toFixed(1)} cm`;
+  for (const item of items) if (item.etat === 'prete') majDims(item);
+}
+unite.onchange = () => {
+  // conversion de la valeur affichée, pour garder la même taille
+  const d = parseFloat(dpi.value) || 300, c = parseFloat(cote.value);
+  if (c > 0) cote.value = unite.value === 'px' ? Math.round(c / 2.54 * d) : +(c / d * 2.54).toFixed(2);
+  sauverTaille();
+};
+function sauverTaille() {
+  ecrire('redim', redim.checked ? '1' : '0'); ecrire('dpi', dpi.value); ecrire('cote', cote.value); ecrire('unite', unite.value);
+  majTaille();
+}
+redim.onchange = dpi.oninput = cote.oninput = sauverTaille;
+
+// ---- dossier d'enregistrement automatique (Chrome, Edge) ----
+let dossier = null;
+const base = () => new Promise((ok, ko) => {
+  const r = indexedDB.open('detourage', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('reglages');
+  r.onsuccess = () => ok(r.result); r.onerror = () => ko(r.error);
+});
+async function memoriserDossier(h) {
+  try {
+    const magasin = (await base()).transaction('reglages', 'readwrite').objectStore('reglages');
+    h ? magasin.put(h, 'dossier') : magasin.delete('dossier');
+  } catch {}
+}
+function majDossier() {
+  $('#dossier').textContent = dossier ? `« ${dossier.name} » : chaque image y est écrite dès qu'elle est prête`
+    : 'aucun : bouton Télécharger sur chaque image';
+  $('#choisirDossier').textContent = dossier ? 'Changer de dossier…' : 'Choisir un dossier…';
+  $('#oublierDossier').hidden = !dossier;
+}
+if (window.showDirectoryPicker) {
+  $('#choisirDossier').onclick = async () => {
+    try { dossier = await showDirectoryPicker({ id: 'detourage', mode: 'readwrite' }); memoriserDossier(dossier); }
+    catch (e) { if (e.name !== 'AbortError') { etat.textContent = 'Dossier refusé : ' + e.message; etat.className = 'erreur'; } }
+    majDossier();
+  };
+  $('#oublierDossier').onclick = () => { dossier = null; memoriserDossier(null); majDossier(); };
+  majDossier();
+  base().then(db => {
+    const r = db.transaction('reglages').objectStore('reglages').get('dossier');
+    r.onsuccess = () => { dossier = r.result || null; majDossier(); };
+  }).catch(() => {});
+} else {
+  document.querySelectorAll('[data-dossier]').forEach(el => el.hidden = true);  // Firefox, Safari
+}
+// l'autorisation d'écrire se redemande après chaque redémarrage du navigateur : au clic sur « Lancer »
+async function autoriserDossier() {
+  if (!dossier) return null;
+  const mode = { mode: 'readwrite' };
+  try {
+    if (await dossier.queryPermission(mode) === 'granted' || await dossier.requestPermission(mode) === 'granted') return dossier;
+  } catch {}
+  etat.textContent = 'Écriture dans le dossier refusée : utilise les boutons Télécharger.'; etat.className = 'erreur';
+  return null;
+}
+
+// ---- état du modèle ----
+async function surveillerModele() {
+  try {
+    const r = await (await fetch('/api/etat')).json();
+    if (r.modele === 'pret') { modelePret = true; if (etat.className !== 'erreur') etat.textContent = ''; majBoutons(); suivant(); return; }
+    if (r.modele === 'erreur') { etat.textContent = 'Le modèle n\'a pas pu être chargé : ' + r.erreur; etat.className = 'erreur'; return; }
+    etat.textContent = 'Préparation du modèle… (au premier lancement, téléchargement d\'environ 1 Go)';
+  } catch { etat.textContent = 'Serveur injoignable : relance lancer.bat.'; etat.className = 'erreur'; }
+  setTimeout(surveillerModele, 1500);
+}
+surveillerModele();
+
+// ---- ajout d'images : envoi au serveur, sans calcul ----
+function ajouter(fichiers) {
+  for (const f of fichiers) {
+    if (!f.type.startsWith('image/') && !/\.tiff?$/i.test(f.name)) continue;
+    const el = document.createElement('li');
+    el.className = 'carte';
+    el.innerHTML = `<div class="vue"><span class="badge" hidden>Avant</span><span class="attente">Chargement…</span></div>
+      <div class="pied"><div class="nom"></div><div class="dims"></div><div class="statut">Chargement…</div>
+      <div class="actions"><button class="principal telecharger" disabled>Télécharger</button>
+      <button class="retirer" aria-label="Retirer">Retirer</button></div></div>`;
+    $('.nom', el).textContent = f.name;
+    $('.nom', el).title = f.name;
+    const item = { fichier: f, el, etat: 'chargement', depot: null, id: null, nom: f.name.replace(/\.[^.]+$/, '') };
+    el._item = item;
+    $('.retirer', el).onclick = () => retirer(item);
+    $('.telecharger', el).onclick = () => telecharger(item);
+    liste.append(el);
+    items.push(item);
+    charger(item);
+  }
+}
+async function charger(item) {
+  const statut = $('.statut', item.el);
+  try {
+    const corps = new FormData();
+    corps.append('fichier', item.fichier);
+    const rep = await fetch('/api/charger', { method: 'POST', body: corps });
+    const r = await rep.json();
+    if (!rep.ok) throw new Error(r.detail || 'Erreur inconnue');
+    item.depot = r;
+    if (item.retire) { fetch(`/api/charger/${r.id}`, { method: 'DELETE' }); return; }
+    item.etat = 'prete';
+    statut.textContent = 'Prête : clique sur « Lancer »';
+    majDims(item);
+    montrerOriginal(item);
+  } catch (e) {
+    item.etat = 'erreur';
+    statut.textContent = e.message === 'Failed to fetch' ? 'Serveur injoignable.' : e.message;
+    statut.classList.add('erreur');
+  }
+  majBoutons();
+}
+// l'original tant que le détourage n'est pas fait (aperçu fabriqué par le serveur : TIFF compris)
+function montrerOriginal(item) {
+  const vue = $('.vue', item.el), attente = $('.attente', vue), badge = $('.badge', vue);
+  attente.textContent = 'Aperçu en préparation…';
+  item.img = new Image();
+  item.img.alt = 'Original : ' + item.fichier.name;
+  item.img.onload = () => { if (!item.id) { attente.remove(); badge.textContent = 'Original'; badge.hidden = false; } };
+  item.img.onerror = () => { if (!item.id) attente.textContent = 'Aperçu indisponible'; };
+  item.img.src = `/api/apercu/${item.depot.id}/avant`;
+  vue.prepend(item.img);
+}
+// « 9922 × 13533 px · 1200 dpi → 2480 × 3383 px · 300 dpi »
+function majDims(item, t = reglagesTaille()) {
+  const { largeur: l, hauteur: h, dpi: d } = item.depot;
+  const avant = `${l} × ${h} px${d ? ` · ${d} dpi` : ''}`;
+  const fin = tailleFinale(l, h, t);
+  $('.dims', item.el).innerHTML = fin ? `${avant} → <b>${fin[0]} × ${fin[1]} px · ${t.dpi} dpi</b>`
+    : `${avant} → <b>${t ? 'inchangée (déjà plus petite)' : 'inchangée'}</b>`;
+}
+$('#fichiers').onchange = e => { ajouter(e.target.files); e.target.value = ''; };
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('survol'); });
+addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('survol'); });
+addEventListener('drop', e => { e.preventDefault(); document.body.classList.remove('survol'); ajouter(e.dataTransfer.files); });
+addEventListener('paste', e => {
+  const imgs = [...e.clipboardData.items].filter(i => i.kind === 'file').map(i => i.getAsFile());
+  ajouter(imgs.map((f, i) => new File([f], f.name && f.name !== 'image.png' ? f.name : `collage-${Date.now()}-${i}.png`, { type: f.type })));
+});
+
+function retirer(item) {
+  item.retire = true;
+  if (item.depot && ['prete', 'attente'].includes(item.etat)) fetch(`/api/charger/${item.depot.id}`, { method: 'DELETE' });
+  items.splice(items.indexOf(item), 1);
+  item.el.remove();
+  majBoutons();
+}
+
+// ---- lancement : les réglages du moment s'appliquent à toutes les images prêtes ----
+boutonLancer.onclick = async () => {
+  const prets = items.filter(i => i.etat === 'prete');
+  const reglages = { taille: reglagesTaille(), format: choixFormat.value, destination: await autoriserDossier() };
+  for (const item of prets) {
+    Object.assign(item, reglages, { etat: 'attente' });
+    majDims(item, item.taille);
+    $('.statut', item.el).textContent = 'En file d\'attente';
+  }
+  majBoutons();
+  suivant();
+};
+
+// ---- traitement, une image à la fois ----
+async function suivant() {
+  const item = items.find(i => i.etat === 'attente');
+  if (enCours || !modelePret || !item) return;
+  enCours = true;
+  item.etat = 'encours';
+  const statut = $('.statut', item.el);
+  const debut = Date.now();
+  const minuteur = setInterval(() => statut.textContent = `Détourage en cours… ${Math.round((Date.now() - debut) / 1000)} s`, 500);
+  statut.textContent = 'Détourage en cours…';
+  try {
+    const corps = new FormData();
+    if (item.taille) for (const [k, v] of Object.entries(item.taille)) corps.append(k, v);
+    const rep = await fetch(`/api/detourer/${item.depot.id}`, { method: 'POST', body: corps });
+    const r = await rep.json();
+    if (!rep.ok) throw new Error(r.detail || 'Erreur inconnue');
+    clearInterval(minuteur);
+    item.id = r.id;
+    item.etat = 'fini';
+    if (!item.retire) {
+      afficher(item, r);
+      if (item.destination) await enregistrerDans(item);
+    }
+  } catch (e) {
+    item.etat = 'erreur';
+    statut.textContent = e.message === 'Failed to fetch' ? 'Serveur injoignable.' : e.message;
+    statut.classList.add('erreur');
+  } finally {
+    clearInterval(minuteur);
+    enCours = false;
+    majBoutons();
+    suivant();
+  }
+}
+
+function afficher(item, r) {
+  const vue = $('.vue', item.el), badge = $('.badge', vue);
+  $('.attente', vue)?.remove();
+  const img = item.img || vue.insertBefore(new Image(), vue.firstChild);  // l'original est remplacé
+  img.onload = img.onerror = null;
+  img.alt = 'Résultat : ' + item.fichier.name;
+  img.src = `/api/apercu/${r.id}/apres`;
+  badge.textContent = 'Avant';
+  badge.hidden = true;
+  const avant = new Image(); avant.src = `/api/apercu/${r.id}/avant`;
+  vue.classList.add('prete');
+  vue.title = 'Maintenir appuyé pour voir l\'original';
+  const montrer = v => { img.src = v ? avant.src : `/api/apercu/${r.id}/apres`; badge.hidden = !v; };
+  vue.onpointerdown = () => montrer(true);
+  vue.onpointerup = vue.onpointerleave = vue.onpointercancel = () => montrer(false);
+  $('.statut', item.el).textContent = `Terminé en ${r.duree} s · ${r.largeur} × ${r.hauteur} px`;
+  $('.telecharger', item.el).disabled = false;
+}
+
+// ---- téléchargement ----
+const extension = () => choixFormat.value;
+async function recuperer(item, ext = extension()) {
+  const rep = await fetch(`/api/resultat/${item.id}.${ext}`);
+  if (!rep.ok) throw new Error((await rep.json()).detail);
+  return rep.blob();
+}
+async function enregistrerDans(item) {
+  const statut = $('.statut', item.el), texte = statut.textContent;
+  statut.textContent = texte + ' · enregistrement…';
+  try {
+    const fichier = await item.destination.getFileHandle(`${item.nom}-sans-fond.${item.format}`, { create: true });
+    const flux = await fichier.createWritable();
+    await flux.write(await recuperer(item, item.format));
+    await flux.close();
+    statut.textContent = `${texte} · enregistrée dans « ${item.destination.name} »`;
+  } catch (e) {
+    statut.textContent = `${texte} · échec de l'enregistrement (${e.message}) : utilise Télécharger`;
+    statut.classList.add('erreur');
+  }
+}
+function enregistrer(blob, nom) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = nom;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+async function telecharger(item) {
+  const bouton = $('.telecharger', item.el);
+  bouton.disabled = true; bouton.textContent = 'Préparation…';
+  try { enregistrer(await recuperer(item), `${item.nom}-sans-fond.${extension()}`); }
+  catch (e) { $('.statut', item.el).textContent = e.message; }
+  finally { bouton.disabled = false; bouton.textContent = 'Télécharger'; }
+}
+
+function majBoutons() {
+  const prets = items.filter(i => i.etat === 'prete').length;
+  boutonLancer.disabled = !prets || !modelePret;
+  boutonLancer.textContent = prets > 1 ? `Lancer (${prets} images)` : 'Lancer';
+  $('#tout').hidden = items.filter(i => i.etat === 'fini').length < 2;
+}
+$('#tout').onclick = async () => {
+  const bouton = $('#tout');
+  bouton.disabled = true; bouton.textContent = 'Préparation du zip…';
+  try {
+    const noms = new Set(), fichiers = [];
+    for (const item of items.filter(i => i.etat === 'fini')) {
+      let nom = `${item.nom}-sans-fond.${extension()}`, k = 2;
+      while (noms.has(nom)) nom = `${item.nom}-sans-fond-${k++}.${extension()}`;
+      noms.add(nom);
+      fichiers.push({ nom, donnees: new Uint8Array(await (await recuperer(item)).arrayBuffer()) });
+    }
+    enregistrer(zip(fichiers), 'aquarelles-sans-fond.zip');
+  } catch (e) { etat.textContent = e.message; etat.className = 'erreur'; }
+  finally { bouton.disabled = false; bouton.textContent = 'Tout télécharger (.zip)'; }
+};
+
+majTaille();
+majBoutons();
+
+// zip sans compression (les images le sont déjà)
+const TABLE = new Uint32Array(256).map((_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+const crc32 = d => { let c = 0xffffffff; for (let i = 0; i < d.length; i++) c = TABLE[(c ^ d[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+function zip(fichiers) {
+  const enc = new TextEncoder(), parties = [], central = [];
+  let decalage = 0;
+  for (const f of fichiers) {
+    const nom = enc.encode(f.nom), crc = crc32(f.donnees), t = f.donnees.length;
+    const local = new DataView(new ArrayBuffer(30));
+    [[0, 0x04034b50, 4], [4, 20, 2], [6, 0x0800, 2], [14, crc, 4], [18, t, 4], [22, t, 4], [26, nom.length, 2]]
+      .forEach(([o, v, n]) => n === 4 ? local.setUint32(o, v, true) : local.setUint16(o, v, true));
+    const c = new DataView(new ArrayBuffer(46));
+    [[0, 0x02014b50, 4], [4, 20, 2], [6, 20, 2], [8, 0x0800, 2], [16, crc, 4], [20, t, 4], [24, t, 4], [28, nom.length, 2], [42, decalage, 4]]
+      .forEach(([o, v, n]) => n === 4 ? c.setUint32(o, v, true) : c.setUint16(o, v, true));
+    parties.push(local, nom, f.donnees);
+    central.push(c, nom);
+    decalage += 30 + nom.length + t;
+  }
+  const tailleCentrale = central.reduce((s, p) => s + p.byteLength, 0);
+  const fin = new DataView(new ArrayBuffer(22));
+  [[0, 0x06054b50, 4], [8, fichiers.length, 2], [10, fichiers.length, 2], [12, tailleCentrale, 4], [16, decalage, 4]]
+    .forEach(([o, v, n]) => n === 4 ? fin.setUint32(o, v, true) : fin.setUint16(o, v, true));
+  return new Blob([...parties, ...central, fin], { type: 'application/zip' });
+}
+</script>
+</body>
+</html>
